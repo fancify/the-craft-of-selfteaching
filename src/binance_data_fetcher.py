@@ -29,18 +29,18 @@ class BinanceDataFetcher:
         self.data_dir = Path(data_dir)
         self.default_pairs = ["BTCUSDT"]  # Start with just BTCUSDT for testing
 
-    def _make_request(self, url: str, params: Dict[str, Any] = None) -> Dict:
+    def _make_request(self, url: str, params: Dict[str, Any] = None) -> Optional[List]:
         """Make a request to the Binance API with proper error handling"""
         try:
             response = requests.get(url, params=params, headers=self.headers)
             if response.status_code == 451:
                 logger.warning("Region restriction detected. You may need to use a VPN or different endpoint.")
-                return {'error': 'region_restricted'}
+                return None
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"API request error: {e}")
-            return {'error': str(e)}
+            return None
 
     def download_and_process_data(self, symbol: str, interval: str,
                                 start_ts: int, end_ts: int) -> Optional[pd.DataFrame]:
@@ -55,11 +55,12 @@ class BinanceDataFetcher:
         }
 
         response_data = self._make_request(url, params)
-        if response_data.get('error') == 'region_restricted':
-            logger.warning(f"Region restricted for {symbol} {interval}")
+        if response_data is None:
+            logger.error(f"Failed to fetch data for {symbol} {interval}")
             return None
-        elif 'error' in response_data:
-            logger.error(f"Error fetching data for {symbol} {interval}: {response_data['error']}")
+
+        if not isinstance(response_data, list):
+            logger.error(f"Unexpected response format for {symbol} {interval}")
             return None
 
         try:

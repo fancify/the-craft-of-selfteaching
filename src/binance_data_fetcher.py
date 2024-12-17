@@ -13,9 +13,11 @@ class BinanceDataFetcher:
 
     def __init__(self, data_dir: str = "data/market_data", use_testnet: bool = True):
         """Initialize the data fetcher"""
-        self.base_url = "https://fapi.binance.com"  # Always use futures endpoint
+        self.base_url = "https://testnet.binancefuture.com" if use_testnet else "https://fapi.binance.com"
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
         }
         self.data_dir = Path(data_dir)
         self.default_pairs = ["BTCUSDT"]

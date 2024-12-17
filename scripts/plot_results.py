@@ -5,43 +5,61 @@ import seaborn as sns
 from datetime import datetime, timedelta
 from src.synthetic_data import SyntheticDataGenerator
 from src.strategy import VegasChannelStrategy
+import logging
 
-def plot_strategy_results(market_data: dict, results: dict, symbol: str):
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def plot_strategy_results(market_data: dict, results: dict, symbol: str, strategy: VegasChannelStrategy):
     """Plot strategy results for a single symbol"""
-    daily_data = market_data[symbol]['daily']
-    positions = results[symbol]['position']
+    try:
+        daily_data = market_data[symbol]['daily'].copy()
+        positions = results[symbol]['position']
 
-    # Create figure with price and EMAs
-    plt.figure(figsize=(15, 10))
+        # Calculate EMAs
+        daily_data = strategy.calculate_ema_bands(daily_data)
 
-    # Plot price and EMAs
-    plt.subplot(2, 1, 1)
-    plt.plot(daily_data.index, daily_data['close'], label='Price', alpha=0.7)
-    plt.plot(daily_data.index, daily_data['ema_lower'], label='EMA144', alpha=0.7)
-    plt.plot(daily_data.index, daily_data['ema_upper'], label='EMA169', alpha=0.7)
+        # Create figure with price and EMAs
+        plt.figure(figsize=(15, 10))
 
-    # Plot positions
-    plt.plot(positions.index, daily_data['close'][positions == 1], '^',
-             color='green', label='Long Entry', markersize=10)
-    plt.plot(positions.index, daily_data['close'][positions == -1], 'v',
-             color='red', label='Short Entry', markersize=10)
+        # Plot price and EMAs
+        plt.subplot(2, 1, 1)
+        plt.plot(daily_data.index, daily_data['close'], label='Price', alpha=0.7)
+        plt.plot(daily_data.index, daily_data['ema_lower'], label='EMA144', alpha=0.7)
+        plt.plot(daily_data.index, daily_data['ema_upper'], label='EMA169', alpha=0.7)
 
-    plt.title(f'{symbol} Price and Positions')
-    plt.legend()
-    plt.grid(True)
+        # Plot positions
+        long_entries = daily_data['close'][positions == 1]
+        short_entries = daily_data['close'][positions == -1]
 
-    # Plot cumulative returns
-    plt.subplot(2, 1, 2)
-    returns = (positions * daily_data['close'].pct_change()).fillna(0)
-    cumulative_returns = (1 + returns).cumprod()
-    plt.plot(cumulative_returns.index, cumulative_returns, label='Strategy Returns')
-    plt.title('Cumulative Returns')
-    plt.legend()
-    plt.grid(True)
+        if not long_entries.empty:
+            plt.plot(long_entries.index, long_entries, '^',
+                    color='green', label='Long Entry', markersize=10)
+        if not short_entries.empty:
+            plt.plot(short_entries.index, short_entries, 'v',
+                    color='red', label='Short Entry', markersize=10)
 
-    plt.tight_layout()
-    plt.savefig(f'results_{symbol}.png')
-    plt.close()
+        plt.title(f'{symbol} Price and Positions')
+        plt.legend()
+        plt.grid(True)
+
+        # Plot cumulative returns
+        plt.subplot(2, 1, 2)
+        returns = (positions * daily_data['close'].pct_change()).fillna(0)
+        cumulative_returns = (1 + returns).cumprod()
+        plt.plot(cumulative_returns.index, cumulative_returns, label='Strategy Returns')
+        plt.title('Cumulative Returns')
+        plt.legend()
+        plt.grid(True)
+
+        plt.tight_layout()
+        plt.savefig(f'results_{symbol}.png')
+        plt.close()
+
+        logger.info(f"Generated plot for {symbol}")
+
+    except Exception as e:
+        logger.error(f"Error plotting results for {symbol}: {str(e)}")
 
 def main():
     """Generate and plot strategy results"""
@@ -65,9 +83,9 @@ def main():
             }
         })
         results[symbol] = symbol_results[symbol]
-        plot_strategy_results(market_data, results, symbol)
+        plot_strategy_results(market_data, results, symbol, strategy)
 
-    print("Results plots have been generated for all symbols.")
+    logger.info("Results plots have been generated for all symbols.")
 
 if __name__ == "__main__":
     main()

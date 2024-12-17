@@ -12,19 +12,24 @@ from src.strategy import VegasChannelStrategy
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def calculate_metrics(returns):
-    """Calculate trading performance metrics"""
+def calculate_metrics(returns: pd.Series) -> dict:
+    """Calculate performance metrics from a series of returns"""
     cumulative_returns = (1 + returns).cumprod()
+    peak = cumulative_returns.expanding(min_periods=1).max()
+    drawdown = (cumulative_returns - peak) / peak
 
-    metrics = {
-        'total_return': (cumulative_returns.iloc[-1] - 1) * 100,
-        'max_drawdown': ((cumulative_returns / cumulative_returns.cummax() - 1).min() * 100),
+    # Calculate daily returns statistics
+    positive_returns = returns[returns > 0]
+    negative_returns = returns[returns < 0]
+
+    return {
+        'total_return': cumulative_returns.iloc[-1] - 1 if len(returns) > 0 else 0,
+        'max_drawdown': drawdown.min() if len(returns) > 0 else 0,
+        'win_rate': len(positive_returns) / len(returns) * 100 if len(returns) > 0 else 0,
+        'avg_win': positive_returns.mean() if len(positive_returns) > 0 else 0,
+        'avg_loss': negative_returns.mean() if len(negative_returns) > 0 else 0,
         'sharpe_ratio': np.sqrt(252) * returns.mean() / returns.std() if len(returns) > 1 else 0,
-        'win_rate': (returns > 0).mean() * 100 if len(returns) > 0 else 0,
-        'avg_win': returns[returns > 0].mean() * 100 if len(returns[returns > 0]) > 0 else 0,
-        'avg_loss': returns[returns < 0].mean() * 100 if len(returns[returns < 0]) > 0 else 0,
     }
-    return metrics
 
 def main():
     """Test Vegas Channel strategy with real Binance Futures data for the last month"""

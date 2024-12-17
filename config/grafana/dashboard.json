@@ -1,0 +1,149 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": null,
+    "title": "Vegas Channel Strategy Dashboard",
+    "tags": ["crypto", "trading"],
+    "timezone": "browser",
+    "editable": true,
+    "hideControls": false,
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "账户当前净值 (Account Value)",
+        "type": "stat",
+        "datasource": "InfluxDB",
+        "targets": [
+          {
+            "measurement": "account",
+            "select": [["field", "total_balance", "last"]]
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "历史上净值记录 (Historical Account Value)",
+        "type": "graph",
+        "datasource": "InfluxDB",
+        "targets": [
+          {
+            "measurement": "account",
+            "select": [["field", "total_balance", "mean"]],
+            "groupBy": [{"type": "time", "params": ["1h"]}]
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 4
+        },
+        "yaxes": [
+          {
+            "format": "currencyUSD",
+            "label": "Value"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "目前的盈亏 (Current P&L)",
+        "type": "stat",
+        "datasource": "InfluxDB",
+        "targets": [
+          {
+            "measurement": "account",
+            "select": [["field", "unrealized_pnl", "last"]]
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "calcs": ["lastNotNull"],
+            "fields": "",
+            "values": false
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "目前所有币的仓位 (Current Positions)",
+        "type": "table",
+        "datasource": "InfluxDB",
+        "targets": [
+          {
+            "measurement": "positions",
+            "select": [
+              ["field", "position", "last"],
+              ["field", "entry_price", "last"]
+            ],
+            "groupBy": [{"type": "tag", "params": ["symbol"]}]
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 12
+        },
+        "options": {
+          "showHeader": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "left",
+              "displayMode": "auto"
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "id": 5,
+        "title": "历史上所有仓位 (Historical Positions)",
+        "type": "graph",
+        "datasource": "InfluxDB",
+        "targets": [
+          {
+            "measurement": "positions",
+            "select": [["field", "position", "last"]],
+            "groupBy": [
+              {"type": "time", "params": ["1h"]},
+              {"type": "tag", "params": ["symbol"]}
+            ]
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 12
+        }
+      }
+    ],
+    "refresh": "5s",
+    "schemaVersion": 27,
+    "version": 1,
+    "links": []
+  }
+}

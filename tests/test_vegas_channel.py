@@ -1,0 +1,119 @@
+import pytest
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from src.vegas_channel import VegasChannel
+
+def create_test_data(start_date: str, periods: int, freq: str) -> pd.DataFrame:
+    """Create test data for testing the Vegas Channel strategy"""
+    dates = pd.date_range(start=start_date, periods=periods, freq=freq)
+    data = pd.DataFrame(index=dates)
+
+    # Generate sample price data
+    data['close'] = np.linspace(100, 200, periods) + np.random.normal(0, 5, periods)
+    data['open'] = data['close'] + np.random.normal(0, 2, periods)
+    data['high'] = np.maximum(data['open'], data['close']) + np.random.normal(0, 1, periods)
+    data['low'] = np.minimum(data['open'], data['close']) - np.random.normal(0, 1, periods)
+
+    return data
+
+def test_calculate_bands():
+    """Test Vegas Channel bands calculation"""
+    vc = VegasChannel()
+    data = create_test_data('2023-01-01', 200, 'D')
+
+    result = vc.calculate_bands(data)
+    assert 'vegas_lower' in result.columns
+    assert 'vegas_upper' in result.columns
+    assert len(result) == len(data)
+
+def test_get_signals():
+    """Test signal generation"""
+    vc = VegasChannel()
+    daily_data = create_test_data('2023-01-01', 200, 'D')
+    weekly_data = create_test_data('2023-01-01', 30, 'W')
+
+    signals = vc.get_signals(daily_data, weekly_data)
+    assert 'position' in signals.columns
+    assert len(signals) == len(daily_data)
+    assert all(signals['position'].isin([-1, 0, 1]))
+
+def test_backtest():
+    """Test backtest functionality with position sizing"""
+    vc = VegasChannel(total_margin=100000, max_coins=50)
+    daily_data = create_test_data('2023-01-01', 200, 'D')
+    weekly_data = create_test_data('2023-01-01', 30, 'W')
+
+    results = vc.backtest(daily_data, weekly_data)
+
+    # Check required columns
+    required_columns = ['position', 'position_size', 'strategy_returns',
+                       'cumulative_returns', 'close', 'vegas_lower', 'vegas_upper']
+    assert all(col in results.columns for col in required_columns)
+
+    # Verify position sizing
+    non_zero_positions = results[results['position'] != 0]
+    if len(non_zero_positions) > 0:
+        position_values = abs(non_zero_positions['position_size'] *
+                            non_zero_positions['close'])
+        assert all(position_values <= vc.position_manager.margin_per_coin * 1.01)  # Allow 1% margin
+
+    # Check strategy calculations
+    assert len(results) == len(daily_data)
+    assert all(results['position'].isin([-1, 0, 1]))
+    assert all(results['cumulative_returns'].notna())
+
+def test_real_market_data():
+    """Test Vegas Channel strategy with real Binance futures data"""
+    # Load real market data
+    daily_data = pd.read_csv('data/market_data/daily/BTCUSDT_daily_20241217.csv')
+    weekly_data = pd.read_csv('data/market_data/weekly/BTCUSDT_weekly_20241217.csv')
+
+    # Convert timestamp to datetime index
+    daily_data['timestamp'] = pd.to_datetime(daily_data['timestamp'], unit='ms')
+    weekly_data['timestamp'] = pd.to_datetime(weekly_data['timestamp'], unit='ms')
+    daily_data.set_index('timestamp', inplace=True)
+    weekly_data.set_index('timestamp', inplace=True)
+
+    # Initialize strategy
+    vc = VegasChannel(total_margin=100000, max_coins=50)
+
+    # Run backtest
+    results = vc.backtest(daily_data, weekly_data)
+
+    # Verify required columns
+    required_columns = ['position', 'position_size', 'strategy_returns',
+                       'cumulative_returns', 'close', 'vegas_lower', 'vegas_upper']
+    assert all(col in results.columns for col in required_columns)
+
+    # Test position sizing
+    non_zero_positions = results[results['position'] != 0]
+    if len(non_zero_positions) > 0:
+        position_values = abs(non_zero_positions['position_size'] *
+                            non_zero_positions['close'])
+        assert all(position_values <= vc.position_manager.margin_per_coin * 1.01)
+
+    # Verify trading logic
+    daily_above_upper = results['close'] > results['vegas_upper']
+    daily_below_lower = results['close'] < results['vegas_lower']
+
+    # Check that positions align with strategy rules
+    for i in range(len(results)):
+        if i == 0:  # Skip first row due to NaN returns
+            continue
+
+        if results['position'].iloc[i] == 1:  # Long position
+            # Should be above upper band
+            assert results['close'].iloc[i] > results['vegas_upper'].iloc[i]
+        elif results['position'].iloc[i] == -1:  # Short position
+            # Should be below lower band
+            assert results['close'].iloc[i] < results['vegas_lower'].iloc[i]
+
+    # Verify no NaN values in cumulative returns
+    assert all(results['cumulative_returns'].notna())
+
+    # Print strategy performance metrics
+    print(f"\nStrategy Performance Metrics:")
+    print(f"Total Returns: {(results['cumulative_returns'].iloc[-1] - 1) * 100:.2f}%")
+    print(f"Number of Trades: {(results['position'] != results['position'].shift(1)).sum()}")
+    print(f"Max Drawdown: {((results['cumulative_returns'] / results['cumulative_returns'].cummax() - 1).min() * 100):.2f}%")

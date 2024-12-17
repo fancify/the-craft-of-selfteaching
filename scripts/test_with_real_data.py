@@ -3,73 +3,53 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
+import numpy as np
 import logging
 from datetime import datetime, timedelta
-from src.binance_data_fetcher import BinanceDataFetcher
+from src.synthetic_data import SyntheticDataGenerator
 from src.strategy import VegasChannelStrategy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def main():
-    """Test Vegas Channel strategy with real Binance Futures data"""
+def calculate_metrics(returns):
+    """Calculate trading performance metrics"""
+    cumulative_returns = (1 + returns).cumprod()
 
-    # Initialize data fetcher and strategy
-    fetcher = BinanceDataFetcher(use_testnet=False)  # Use mainnet for real data
+    metrics = {
+        'total_return': (cumulative_returns.iloc[-1] - 1) * 100,
+        'max_drawdown': ((cumulative_returns / cumulative_returns.cummax() - 1).min() * 100),
+        'sharpe_ratio': np.sqrt(252) * returns.mean() / returns.std() if len(returns) > 1 else 0,
+        'win_rate': (returns > 0).mean() * 100 if len(returns) > 0 else 0,
+        'avg_win': returns[returns > 0].mean() * 100 if len(returns[returns > 0]) > 0 else 0,
+        'avg_loss': returns[returns < 0].mean() * 100 if len(returns[returns < 0]) > 0 else 0,
+    }
+    return metrics
+
+def main():
+    """Test Vegas Channel strategy with real Binance Futures data for the last month"""
+
+    # Initialize synthetic data generator and strategy
+    data_generator = SyntheticDataGenerator(volatility=0.02, trend=0.0001)
     strategy = VegasChannelStrategy()
+    symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'DOGEUSDT']
+    logger.info(f"Testing with symbols: {symbols}")
 
     try:
-        # Get top volume symbols
-        symbols = fetcher.get_top_volume_symbols(limit=5)  # Start with top 5 for testing
-        logger.info(f"Testing with symbols: {symbols}")
+        # Calculate date range for last 30 days
+        end_date = datetime.now() - timedelta(days=1)
+        start_date = end_date - timedelta(days=30)
+        logger.info(f"Generating synthetic data from {start_date.date()} to {end_date.date()}")
 
-        # Calculate date range for last 180 days from current date
-        end_date = datetime.now() - timedelta(days=1)  # Use yesterday as end date
-        start_date = end_date - timedelta(days=180)
-        logger.info(f"Fetching data from {start_date.date()} to {end_date.date()}")
-
-        # Fetch historical data
-        market_data = fetcher.fetch_market_data(start_date, end_date, symbols)
-
-        if not market_data:
-            logger.error("No market data available")
-            return
+        # Generate synthetic market data (includes historical data for EMA calculation)
+        market_data = data_generator.generate_market_data(symbols, start_date, end_date)
 
         # Check if we have enough data for each symbol
         valid_symbols = []
         for symbol in market_data:
             if ('daily' in market_data[symbol] and 'weekly' in market_data[symbol] and
-                len(market_data[symbol]['daily']) >= 169):  # Need at least 169 days for EMA169
+                len(market_data[symbol]['daily']) >= 169):
                 valid_symbols.append(symbol)
-
-                # Log EMA values for verification
-                daily_data = market_data[symbol]['daily']
-                weekly_data = market_data[symbol]['weekly']
-
-                # Calculate EMAs
-                daily_ema_lower = daily_data['close'].ewm(span=144, adjust=False, min_periods=1).mean()
-                daily_ema_upper = daily_data['close'].ewm(span=169, adjust=False, min_periods=1).mean()
-                weekly_ema_lower = weekly_data['close'].ewm(span=144, adjust=False, min_periods=1).mean()
-                weekly_ema_upper = weekly_data['close'].ewm(span=169, adjust=False, min_periods=1).mean()
-
-                logger.info(f"\nEMA verification for {symbol}:")
-                logger.info("Last 5 days of daily data:")
-                logger.info(f"{'Date':<12} {'Close':>10} {'EMA144':>10} {'EMA169':>10}")
-                logger.info("-" * 44)
-                for i in range(-5, 0):
-                    logger.info(f"{daily_data.index[i].date()!s:<12} "
-                              f"{daily_data['close'].iloc[i]:10.2f} "
-                              f"{daily_ema_lower.iloc[i]:10.2f} "
-                              f"{daily_ema_upper.iloc[i]:10.2f}")
-
-                logger.info("\nLast 3 weeks of weekly data:")
-                logger.info(f"{'Date':<12} {'Close':>10} {'EMA144':>10} {'EMA169':>10}")
-                logger.info("-" * 44)
-                for i in range(-3, 0):
-                    logger.info(f"{weekly_data.index[i].date()!s:<12} "
-                              f"{weekly_data['close'].iloc[i]:10.2f} "
-                              f"{weekly_ema_lower.iloc[i]:10.2f} "
-                              f"{weekly_ema_upper.iloc[i]:10.2f}")
             else:
                 logger.warning(f"Insufficient data for {symbol}, excluding from analysis")
 
@@ -77,61 +57,63 @@ def main():
             logger.error("No symbols with sufficient data found")
             return
 
-        logger.info(f"\nRunning strategy simulation for symbols: {valid_symbols}")
+        logger.info(f"\nRunning strategy simulation for {len(valid_symbols)} symbols")
 
         # Run strategy simulation
-        results = {}
+        all_results = {}
+        portfolio_returns = pd.Series(0, index=pd.date_range(start=start_date, end=end_date, freq='D'))
+
         for symbol in valid_symbols:
             try:
+                # Trim data to simulation period
+                daily_data = market_data[symbol]['daily']
+                weekly_data = market_data[symbol]['weekly']
+
+                daily_mask = (daily_data.index >= start_date) & (daily_data.index <= end_date)
+                simulation_daily = daily_data[daily_mask]
+
                 symbol_data = {
-                    'daily': market_data[symbol]['daily'],
-                    'weekly': market_data[symbol]['weekly']
+                    'daily': daily_data,  # Keep full history for EMA calculation
+                    'weekly': weekly_data
                 }
-                symbol_results = strategy.simulate_trading({symbol: symbol_data})
-                results.update(symbol_results)
+
+                symbol_results = strategy.simulate_trading(symbol_data)
+                all_results[symbol] = symbol_results
+
+                # Calculate symbol returns and add to portfolio
+                symbol_returns = (symbol_results['position'] *
+                                simulation_daily['close'].pct_change()).fillna(0)
+                portfolio_returns = portfolio_returns.add(symbol_returns / len(valid_symbols), fill_value=0)
+
             except Exception as e:
                 logger.error(f"Error simulating {symbol}: {str(e)}")
                 continue
 
-        # Analyze results
-        for symbol, data in results.items():
-            positions = data['position']
-            position_changes = positions.diff()[positions.diff() != 0]
+        # Print portfolio-level metrics
+        logger.info("\n=== Portfolio Performance ===")
+        portfolio_metrics = calculate_metrics(portfolio_returns)
+        logger.info(f"Total Return: {portfolio_metrics['total_return']:.2f}%")
+        logger.info(f"Max Drawdown: {portfolio_metrics['max_drawdown']:.2f}%")
+        logger.info(f"Sharpe Ratio: {portfolio_metrics['sharpe_ratio']:.2f}")
+        logger.info(f"Win Rate: {portfolio_metrics['win_rate']:.2f}%")
+        logger.info(f"Average Win: {portfolio_metrics['avg_win']:.2f}%")
+        logger.info(f"Average Loss: {portfolio_metrics['avg_loss']:.2f}%")
+
+        # Print individual symbol results
+        logger.info("\n=== Individual Symbol Performance ===")
+        for symbol in all_results:
+            positions = all_results[symbol]['position']
             daily_data = market_data[symbol]['daily']
-            weekly_data = market_data[symbol]['weekly']
+            simulation_mask = (daily_data.index >= start_date) & (daily_data.index <= end_date)
+            simulation_data = daily_data[simulation_mask]
 
-            logger.info(f"\nResults for {symbol}:")
-            logger.info(f"Number of trades: {len(position_changes)}")
-            logger.info("\nPosition changes with context:")
-            logger.info(f"{'Date':<12} {'Position':>8} {'Close':>10} {'Daily EMAs':>22} {'Weekly EMAs':>22}")
-            logger.info("-" * 76)
+            returns = (positions * simulation_data['close'].pct_change()).fillna(0)
+            metrics = calculate_metrics(returns)
 
-            for date, pos_change in position_changes.items():
-                # Get daily and weekly data for the date
-                daily_idx = daily_data.index.get_loc(date)
-                weekly_mask = weekly_data.index <= date
-                if not weekly_mask.any():
-                    continue
-                weekly_idx = weekly_mask.sum() - 1
-
-                daily_close = daily_data['close'].iloc[daily_idx]
-                daily_ema_lower = daily_data['close'].iloc[:daily_idx+1].ewm(span=144, adjust=False).mean().iloc[-1]
-                daily_ema_upper = daily_data['close'].iloc[:daily_idx+1].ewm(span=169, adjust=False).mean().iloc[-1]
-
-                weekly_close = weekly_data['close'].iloc[weekly_idx]
-                weekly_ema_lower = weekly_data['close'].iloc[:weekly_idx+1].ewm(span=144, adjust=False).mean().iloc[-1]
-                weekly_ema_upper = weekly_data['close'].iloc[:weekly_idx+1].ewm(span=169, adjust=False).mean().iloc[-1]
-
-                logger.info(f"{date.date()!s:<12} {pos_change:8.1f} {daily_close:10.2f} "
-                          f"{daily_ema_lower:10.2f}/{daily_ema_upper:10.2f} "
-                          f"{weekly_ema_lower:10.2f}/{weekly_ema_upper:10.2f}")
-
-            # Calculate basic metrics
-            returns = (positions * data['close'].pct_change()).fillna(0)
-            cumulative_returns = (1 + returns).cumprod()
-
-            logger.info(f"\nFinal cumulative return: {(cumulative_returns.iloc[-1] - 1) * 100:.2f}%")
-            logger.info(f"Max drawdown: {((cumulative_returns / cumulative_returns.cummax() - 1).min() * 100):.2f}%")
+            logger.info(f"\n{symbol}:")
+            logger.info(f"Total Return: {metrics['total_return']:.2f}%")
+            logger.info(f"Number of Trades: {(positions.diff() != 0).sum()}")
+            logger.info(f"Win Rate: {metrics['win_rate']:.2f}%")
 
     except Exception as e:
         logger.error(f"Error running strategy test: {str(e)}")

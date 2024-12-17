@@ -12,11 +12,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def get_last_month_dates():
-    """Get start and end dates for February 2024"""
-    reference_date = datetime(2024, 3, 1)
-    last_day_prev = reference_date - timedelta(days=1)
-    first_day_prev = last_day_prev.replace(day=1)
-    return first_day_prev, last_day_prev
+    """Get start and end dates for data fetching"""
+    end_date = datetime(2024, 3, 1)  # End date (beginning of March)
+    # Get 200 days before end date to ensure enough data for EMA169
+    start_date = end_date - timedelta(days=200)
+    return start_date, end_date
 
 def validate_data(market_data):
     """Validate the fetched market data"""

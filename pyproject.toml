@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "binance_vegas_strategy"
+version = "0.1.0"
+authors = [
+    { name = "Devin AI", email = "devin@example.com" },
+]
+description = "A trading strategy based on Vegas Channel indicators"
+requires-python = ">=3.8"
+dependencies = [
+    "pandas",
+    "requests",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+namespaces = false

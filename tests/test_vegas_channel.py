@@ -69,11 +69,16 @@ def test_real_market_data():
     daily_data = pd.read_csv('data/market_data/daily/BTCUSDT_daily_20241217.csv')
     weekly_data = pd.read_csv('data/market_data/weekly/BTCUSDT_weekly_20241217.csv')
 
-    # Convert timestamp to datetime index
-    daily_data['timestamp'] = pd.to_datetime(daily_data['timestamp'], unit='ms')
-    weekly_data['timestamp'] = pd.to_datetime(weekly_data['timestamp'], unit='ms')
+    # Convert close_time to datetime index
+    daily_data['timestamp'] = pd.to_datetime(daily_data['close_time'], unit='ms')
+    weekly_data['timestamp'] = pd.to_datetime(weekly_data['close_time'], unit='ms')
     daily_data.set_index('timestamp', inplace=True)
     weekly_data.set_index('timestamp', inplace=True)
+
+    # Select required columns
+    columns = ['open', 'high', 'low', 'close']
+    daily_data = daily_data[columns]
+    weekly_data = weekly_data[columns]
 
     # Initialize strategy
     vc = VegasChannel(total_margin=100000, max_coins=50)

@@ -13,7 +13,7 @@ class BinanceDataFetcher:
 
     def __init__(self, data_dir: str = "data/market_data", use_testnet: bool = True):
         """Initialize the data fetcher"""
-        self.base_url = "https://testnet.binancefuture.com" if use_testnet else "https://fapi.binance.com"
+        self.base_url = "https://fapi.binance.com"  # Always use futures endpoint
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
@@ -63,29 +63,31 @@ class BinanceDataFetcher:
         }
 
         response_data = self._make_request(url, params)
-        if response_data is None:
+        if not response_data:
             logger.error(f"Failed to fetch data for {symbol} {interval}")
             return None
 
-        if not isinstance(response_data, list):
-            logger.error(f"Unexpected response format for {symbol} {interval}")
-            return None
-
         try:
-            df = pd.DataFrame(response_data, columns=[
+            # Binance klines API returns a list of lists with specific order
+            columns = [
                 'timestamp', 'open', 'high', 'low', 'close', 'volume',
                 'close_time', 'quote_volume', 'trades', 'taker_buy_volume',
                 'taker_buy_quote_volume', 'ignore'
-            ])
+            ]
 
-            # Convert timestamp to datetime
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df = pd.DataFrame(response_data, columns=columns)
+
+            # Convert numeric columns
+            numeric_columns = ['open', 'high', 'low', 'close', 'volume',
+                             'quote_volume', 'trades', 'taker_buy_volume',
+                             'taker_buy_quote_volume']
+            df[numeric_columns] = df[numeric_columns].astype(float)
+
+            # Convert timestamp to datetime and set as index
+            df['timestamp'] = pd.to_datetime(df['timestamp'].astype(int), unit='ms')
             df.set_index('timestamp', inplace=True)
 
-            # Convert string values to float
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                df[col] = df[col].astype(float)
-
+            logger.info(f"Successfully processed {len(df)} records for {symbol} {interval}")
             return df
 
         except Exception as e:
@@ -109,6 +111,40 @@ class BinanceDataFetcher:
             logger.error(f"Error saving data for {symbol} {interval}: {str(e)}")
             return False
 
+    def get_top_volume_symbols(self, limit: int = 5) -> List[str]:
+        """Get top volume symbols from Binance Futures"""
+        url = f"{self.base_url}/fapi/v1/ticker/24hr"
+
+        response_data = self._make_request(url)
+        if not response_data:
+            logger.error("Failed to fetch symbol volume data")
+            return self.default_pairs
+
+        try:
+            # Convert to DataFrame for easier processing
+            df = pd.DataFrame(response_data)
+
+            # Convert volume to float and sort
+            df['volume'] = df['volume'].astype(float)
+            df = df.sort_values('volume', ascending=False)
+
+            # Filter USDT pairs only
+            usdt_pairs = df[df['symbol'].str.endswith('USDT')]
+
+            # Get top N symbols
+            top_symbols = usdt_pairs['symbol'].head(limit).tolist()
+
+            if not top_symbols:
+                logger.warning("No USDT pairs found, using default pairs")
+                return self.default_pairs
+
+            logger.info(f"Top {limit} volume symbols: {top_symbols}")
+            return top_symbols
+
+        except Exception as e:
+            logger.error(f"Error processing volume data: {str(e)}")
+            return self.default_pairs
+
     def fetch_market_data(self, start_date: datetime, end_date: datetime,
                          symbols: List[str] = None) -> Dict[str, Dict[str, pd.DataFrame]]:
         """Fetch market data for specified symbols and time range"""
@@ -121,32 +157,33 @@ class BinanceDataFetcher:
 
         for symbol in symbols:
             market_data[symbol] = {}
+            logger.info(f"Fetching data for {symbol} from futures endpoint")
 
-            # Try both testnet and mainnet endpoints
-            endpoints = [True, False]  # [use_testnet, use_mainnet]
+            # Fetch daily data
+            daily_data = self.download_and_process_data(symbol, '1d', start_ts, end_ts)
+            if daily_data is not None:
+                market_data[symbol]['daily'] = daily_data
+                self.save_data(daily_data, symbol, 'daily')
 
-            for use_testnet in endpoints:
-                self.base_url = "https://testnet.binancefuture.com" if use_testnet else "https://fapi.binance.com"
-                logger.info(f"Trying {'testnet' if use_testnet else 'mainnet'} endpoint for {symbol}")
-
-                # Fetch daily data
-                daily_data = self.download_and_process_data(symbol, '1d', start_ts, end_ts)
-                if daily_data is not None:
-                    market_data[symbol]['daily'] = daily_data
-                    self.save_data(daily_data, symbol, 'daily')
-
-                    # Fetch weekly data only if daily data was successful
-                    weekly_data = self.download_and_process_data(symbol, '1w', start_ts, end_ts)
-                    if weekly_data is not None:
-                        market_data[symbol]['weekly'] = weekly_data
-                        self.save_data(weekly_data, symbol, 'weekly')
-                        break  # Successfully got both daily and weekly data
-
-                if 'daily' in market_data[symbol] and 'weekly' in market_data[symbol]:
-                    break  # Skip trying other endpoints if we have all the data
-
-            if 'daily' not in market_data[symbol] or 'weekly' not in market_data[symbol]:
-                logger.error(f"Failed to fetch complete data for {symbol}")
+                # Fetch weekly data only if daily data was successful
+                weekly_data = self.download_and_process_data(symbol, '1w', start_ts, end_ts)
+                if weekly_data is not None:
+                    market_data[symbol]['weekly'] = weekly_data
+                    self.save_data(weekly_data, symbol, 'weekly')
+                else:
+                    logger.error(f"Failed to fetch weekly data for {symbol}")
+                    continue
+            else:
+                logger.error(f"Failed to fetch daily data for {symbol}")
                 continue
+
+            # Verify we have enough historical data
+            if len(daily_data) < 169:  # Need at least 169 days for EMA169
+                logger.error(f"Insufficient historical data for {symbol}: {len(daily_data)} days")
+                continue
+
+            logger.info(f"Successfully fetched data for {symbol}")
+            logger.info(f"Daily data range: {daily_data.index[0]} to {daily_data.index[-1]}")
+            logger.info(f"Weekly data range: {weekly_data.index[0]} to {weekly_data.index[-1]}")
 
         return market_data

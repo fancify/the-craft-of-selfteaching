@@ -40,40 +40,37 @@ class VegasChannel:
         position = 0
         for i in range(len(daily)):
             current_daily = daily.iloc[i]
-            weekly_mask = weekly.index <= daily.index[i]
+            current_date = daily.index[i]
+
+            # Find the most recent weekly data point
+            weekly_mask = weekly.index <= current_date
             if not weekly_mask.any():
                 continue
-
             current_weekly = weekly[weekly_mask].iloc[-1]
 
             # Position management logic
-            if position == 0:  # No position
-                # Long entry: both weekly and daily close above EMA169
-                if (current_weekly['close'] > current_weekly['vegas_upper'] and
-                    current_daily['close'] > current_daily['vegas_upper']):
-                    signals.iloc[i, signals.columns.get_loc('position')] = 1
-                    position = 1
-                # Short entry: both weekly and daily close below EMA144
-                elif (current_weekly['close'] < current_weekly['vegas_lower'] and
-                      current_daily['close'] < current_daily['vegas_lower']):
-                    signals.iloc[i, signals.columns.get_loc('position')] = -1
-                    position = -1
-
-            elif position == 1:  # Long position
-                # Exit long if daily close below EMA144
+            if position == 1:  # Long position
+                # Exit long if daily close below EMA144 (vegas_lower)
                 if current_daily['close'] < current_daily['vegas_lower']:
-                    signals.iloc[i, signals.columns.get_loc('position')] = 0
                     position = 0
-                else:
-                    signals.iloc[i, signals.columns.get_loc('position')] = 1
+                signals.iloc[i, signals.columns.get_loc('position')] = position
 
             elif position == -1:  # Short position
-                # Exit short if daily close above EMA169
+                # Exit short if daily close above EMA169 (vegas_upper)
                 if current_daily['close'] > current_daily['vegas_upper']:
-                    signals.iloc[i, signals.columns.get_loc('position')] = 0
                     position = 0
-                else:
-                    signals.iloc[i, signals.columns.get_loc('position')] = -1
+                signals.iloc[i, signals.columns.get_loc('position')] = position
+
+            else:  # No position
+                # Long entry: both weekly and daily close above EMA169 (vegas_upper)
+                if (current_weekly['close'] > current_weekly['vegas_upper'] and
+                    current_daily['close'] > current_daily['vegas_upper']):
+                    position = 1
+                # Short entry: both weekly and daily close below EMA144 (vegas_lower)
+                elif (current_weekly['close'] < current_weekly['vegas_lower'] and
+                      current_daily['close'] < current_daily['vegas_lower']):
+                    position = -1
+                signals.iloc[i, signals.columns.get_loc('position')] = position
 
         return signals
 

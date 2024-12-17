@@ -13,11 +13,11 @@ class BinanceDataFetcher:
 
     def __init__(self, data_dir: str = "data/market_data", use_testnet: bool = True):
         """Initialize the data fetcher"""
-        self.base_url = "https://testnet.binancefuture.com" if use_testnet else "https://fapi.binance.com"
+        self.base_url = "https://api.binance.com"  # Use public API endpoint
+        self.futures_url = "https://fapi.binance.com"  # Futures API endpoint
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
+            'Accept': 'application/json'
         }
         self.data_dir = Path(data_dir)
         self.default_pairs = ["BTCUSDT"]
@@ -55,7 +55,8 @@ class BinanceDataFetcher:
     def download_and_process_data(self, symbol: str, interval: str,
                                 start_ts: int, end_ts: int) -> Optional[pd.DataFrame]:
         """Download and process market data for a symbol"""
-        url = f"{self.base_url}/fapi/v1/klines"
+        # Try futures API first
+        url = f"{self.futures_url}/fapi/v1/klines"
         params = {
             'symbol': symbol,
             'interval': interval,
@@ -65,6 +66,13 @@ class BinanceDataFetcher:
         }
 
         response_data = self._make_request(url, params)
+
+        # If futures API fails, try spot API
+        if not response_data:
+            logger.info(f"Falling back to spot API for {symbol}")
+            url = f"{self.base_url}/api/v3/klines"
+            response_data = self._make_request(url, params)
+
         if not response_data:
             logger.error(f"Failed to fetch data for {symbol} {interval}")
             return None
@@ -115,9 +123,16 @@ class BinanceDataFetcher:
 
     def get_top_volume_symbols(self, limit: int = 5) -> List[str]:
         """Get top volume symbols from Binance Futures"""
-        url = f"{self.base_url}/fapi/v1/ticker/24hr"
-
+        # Try futures API first
+        url = f"{self.futures_url}/fapi/v1/ticker/24hr"
         response_data = self._make_request(url)
+
+        # If futures API fails, try spot API
+        if not response_data:
+            logger.info("Falling back to spot API for symbol volume data")
+            url = f"{self.base_url}/api/v3/ticker/24hr"
+            response_data = self._make_request(url)
+
         if not response_data:
             logger.error("Failed to fetch symbol volume data")
             return self.default_pairs
